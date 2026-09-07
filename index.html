@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#111827" />
+  <link rel="manifest" href="manifest.json" />
+  <title>나의 5K</title>
+  <style>
+    :root{
+      --bg:#0f172a; --card:#111827; --muted:#94a3b8; --text:#f8fafc;
+      --accent:#22c55e; --accent2:#38bdf8; --danger:#ef4444; --line:#334155;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0; min-height:100vh; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      background:linear-gradient(180deg,#020617,#0f172a); color:var(--text);
+      display:flex; justify-content:center;
+    }
+    main{width:min(100%,560px); padding:20px 16px 40px}
+    h1{font-size:28px; margin:4px 0 4px}
+    .sub{color:var(--muted); margin-bottom:18px}
+    .card{background:rgba(17,24,39,.92); border:1px solid var(--line); border-radius:20px; padding:18px; margin:14px 0}
+    .phase{font-size:18px; color:var(--muted)}
+    .phase strong{display:block; color:var(--text); font-size:30px; margin-top:3px}
+    .countdown{font-size:64px; font-weight:800; text-align:center; margin:20px 0 8px; font-variant-numeric:tabular-nums}
+    .grid{display:grid; grid-template-columns:1fr 1fr; gap:12px}
+    .metric{background:#0b1220; border-radius:16px; padding:14px}
+    .metric span{display:block; color:var(--muted); font-size:13px; margin-bottom:6px}
+    .metric b{font-size:26px}
+    .buttons{display:flex; gap:10px; margin-top:16px}
+    button{
+      flex:1; border:0; border-radius:14px; padding:15px 12px; font-size:17px; font-weight:700;
+      background:var(--accent); color:#052e16;
+    }
+    button.secondary{background:#1e293b; color:var(--text); border:1px solid var(--line)}
+    button.danger{background:#7f1d1d; color:#fee2e2}
+    button:disabled{opacity:.45}
+    .status{font-size:14px; color:var(--muted); line-height:1.5}
+    .bar{height:10px; background:#1e293b; border-radius:99px; overflow:hidden; margin-top:14px}
+    .bar > div{height:100%; width:0%; background:var(--accent2); transition:width .25s}
+    .log{font-size:14px; color:var(--muted); white-space:pre-line}
+    .small{font-size:12px; color:var(--muted)}
+  </style>
+</head>
+<body>
+<main>
+  <h1>🏃 나의 5K</h1>
+  <div class="sub">5km 완주를 위한 개인 러닝 기록 앱 · 1차 테스트</div>
+
+  <section class="card">
+    <div class="phase">현재 구간<strong id="phaseName">준비</strong></div>
+    <div id="countdown" class="countdown">03:00</div>
+    <div class="bar"><div id="progress"></div></div>
+
+    <div class="buttons">
+      <button id="startBtn">운동 시작</button>
+      <button id="pauseBtn" class="secondary" disabled>일시정지</button>
+      <button id="finishBtn" class="danger" disabled>종료</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="grid">
+      <div class="metric"><span>거리</span><b id="distance">0.00 km</b></div>
+      <div class="metric"><span>운동 시간</span><b id="elapsed">00:00</b></div>
+      <div class="metric"><span>평균 페이스</span><b id="pace">--'--"</b></div>
+      <div class="metric"><span>현재 속도</span><b id="speed">0.0 km/h</b></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="status" id="gpsStatus">GPS 대기 중. 운동 시작을 누르면 위치 권한을 요청합니다.</div>
+    <div class="small" style="margin-top:10px">
+      루틴: 3분 걷기 → (5분 달리기 + 1분 걷기) × 5 → 3분 걷기
+    </div>
+  </section>
+
+  <section class="card">
+    <div style="font-weight:700;margin-bottom:8px">오늘 기록</div>
+    <div id="summary" class="log">아직 운동 기록이 없습니다.</div>
+  </section>
+
+  <script>
+  (() => {
+    const phaseName = document.getElementById('phaseName');
+    const countdown = document.getElementById('countdown');
+    const progress = document.getElementById('progress');
+    const distanceEl = document.getElementById('distance');
+    const elapsedEl = document.getElementById('elapsed');
+    const paceEl = document.getElementById('pace');
+    const speedEl = document.getElementById('speed');
+    const gpsStatus = document.getElementById('gpsStatus');
+    const summary = document.getElementById('summary');
+    const startBtn = document.getElementById('startBtn');
+    const pauseBtn = document.getElementById('pauseBtn');
+    const finishBtn = document.getElementById('finishBtn');
+
+    const segments = [
+      {name:'준비 걷기', sec:180},
+      {name:'달리기 1', sec:300},{name:'걷기 1', sec:60},
+      {name:'달리기 2', sec:300},{name:'걷기 2', sec:60},
+      {name:'달리기 3', sec:300},{name:'걷기 3', sec:60},
+      {name:'달리기 4', sec:300},{name:'걷기 4', sec:60},
+      {name:'달리기 5', sec:300},{name:'걷기 5', sec:60},
+      {name:'마무리 걷기', sec:180}
+    ];
+
+    let segIndex = 0;
+    let segRemaining = segments[0].sec;
+    let timer = null;
+    let startedAt = null;
+    let pausedAt = null;
+    let pausedTotal = 0;
+    let running = false;
+    let watchId = null;
+    let totalDistanceM = 0;
+    let lastPoint = null;
+    let lastSpeedKmh = 0;
+    let audioCtx = null;
+
+    function fmtTime(s){
+      s = Math.max(0, Math.floor(s));
+      const m = Math.floor(s/60), ss=s%60;
+      return String(m).padStart(2,'0')+':'+String(ss).padStart(2,'0');
+    }
+
+    function haversine(a,b){
+      const R=6371000, toRad=x=>x*Math.PI/180;
+      const dLat=toRad(b.lat-a.lat), dLon=toRad(b.lon-a.lon);
+      const lat1=toRad(a.lat), lat2=toRad(b.lat);
+      const h=Math.sin(dLat/2)**2+Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLon/2)**2;
+      return 2*R*Math.asin(Math.sqrt(h));
+    }
+
+    function beep(freq=880, duration=.28){
+      try{
+        audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+        if(audioCtx.state === 'suspended') audioCtx.resume();
+        const osc=audioCtx.createOscillator(), gain=audioCtx.createGain();
+        osc.connect(gain); gain.connect(audioCtx.destination);
+        osc.frequency.value=freq;
+        gain.gain.setValueAtTime(.2,audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(.001,audioCtx.currentTime+duration);
+        osc.start(); osc.stop(audioCtx.currentTime+duration);
+      }catch(e){}
+    }
+
+    function announce(text){
+      beep(text.includes('달리기')?980:680,.35);
+      if('speechSynthesis' in window){
+        try{
+          const u=new SpeechSynthesisUtterance(text);
+          u.lang='ko-KR'; u.rate=1.0;
+          speechSynthesis.cancel(); speechSynthesis.speak(u);
+        }catch(e){}
+      }
+    }
+
+    function render(){
+      const seg=segments[segIndex] || {name:'완료',sec:1};
+      phaseName.textContent=seg.name;
+      countdown.textContent=fmtTime(segRemaining);
+      const p = seg.sec ? ((seg.sec-segRemaining)/seg.sec*100) : 0;
+      progress.style.width=Math.min(100,Math.max(0,p))+'%';
+
+      let elapsed=0;
+      if(startedAt){
+        const now=running ? Date.now() : (pausedAt || Date.now());
+        elapsed=Math.max(0,Math.floor((now-startedAt-pausedTotal)/1000));
+      }
+      elapsedEl.textContent=fmtTime(elapsed);
+
+      const km=totalDistanceM/1000;
+      distanceEl.textContent=km.toFixed(2)+' km';
+      speedEl.textContent=lastSpeedKmh.toFixed(1)+' km/h';
+
+      if(km>0.05 && elapsed>0){
+        const secPerKm=elapsed/km;
+        const pm=Math.floor(secPerKm/60), ps=Math.round(secPerKm%60);
+        paceEl.textContent=pm+"'"+String(ps).padStart(2,'0')+'"';
+      } else {
+        paceEl.textContent="--'--\"";
+      }
+    }
+
+    function nextSegment(){
+      segIndex++;
+      if(segIndex>=segments.length){
+        finishWorkout(true);
+        return;
+      }
+      segRemaining=segments[segIndex].sec;
+      const s=segments[segIndex].name;
+      announce(s.startsWith('달리기') ? '달리기를 시작하세요' : s.includes('걷기') ? '이제 걸으세요' : s);
+      render();
+    }
+
+    function tick(){
+      if(!running) return;
+      if(segRemaining>0) segRemaining--;
+      if(segRemaining<=0) nextSegment();
+      render();
+    }
+
+    function startGps(){
+      if(!navigator.geolocation){
+        gpsStatus.textContent='이 브라우저는 GPS 위치 기능을 지원하지 않습니다.';
+        return;
+      }
+      gpsStatus.textContent='GPS 신호를 찾는 중…';
+      watchId=navigator.geolocation.watchPosition(pos=>{
+        const c=pos.coords;
+        const p={lat:c.latitude, lon:c.longitude, acc:c.accuracy, t:pos.timestamp};
+        gpsStatus.textContent=`GPS 연결됨 · 정확도 약 ${Math.round(c.accuracy)}m`;
+
+        if(typeof c.speed === 'number' && c.speed >= 0){
+          lastSpeedKmh=c.speed*3.6;
+        }
+
+        if(lastPoint){
+          const d=haversine(lastPoint,p);
+          const dt=(p.t-lastPoint.t)/1000;
+          const plausibleSpeed = dt>0 ? d/dt : 0;
+
+          // GPS 튐 완화: 정확도가 너무 나쁘거나 순간속도가 비현실적이면 제외
+          if(p.acc <= 40 && lastPoint.acc <= 40 && d >= 1.5 && d <= 100 && plausibleSpeed <= 8){
+            totalDistanceM += d;
+          }
+        }
+        lastPoint=p;
+        render();
+      }, err=>{
+        const msg = err.code===1 ? '위치 권한이 거부되었습니다. Safari 설정에서 위치 권한을 허용해 주세요.'
+                  : err.code===2 ? '현재 위치를 확인할 수 없습니다.'
+                  : 'GPS 응답 시간이 초과되었습니다.';
+        gpsStatus.textContent=msg;
+      }, {enableHighAccuracy:true, maximumAge:1000, timeout:10000});
+    }
+
+    function stopGps(){
+      if(watchId!==null && navigator.geolocation){
+        navigator.geolocation.clearWatch(watchId);
+        watchId=null;
+      }
+    }
+
+    function startWorkout(){
+      if(!startedAt){
+        startedAt=Date.now();
+        pausedTotal=0;
+        totalDistanceM=0;
+        lastPoint=null;
+        lastSpeedKmh=0;
+        segIndex=0;
+        segRemaining=segments[0].sec;
+        startGps();
+        announce('운동을 시작합니다. 3분간 걸으세요');
+      }else if(pausedAt){
+        pausedTotal += Date.now()-pausedAt;
+        pausedAt=null;
+        announce('운동을 계속합니다');
+      }
+      running=true;
+      startBtn.disabled=true;
+      pauseBtn.disabled=false;
+      finishBtn.disabled=false;
+      if(!timer) timer=setInterval(tick,1000);
+      render();
+    }
+
+    function pauseWorkout(){
+      if(running){
+        running=false;
+        pausedAt=Date.now();
+        pauseBtn.textContent='계속';
+        gpsStatus.textContent += ' · 일시정지';
+        announce('운동을 일시정지합니다');
+      }else{
+        pausedTotal += Date.now()-pausedAt;
+        pausedAt=null;
+        running=true;
+        pauseBtn.textContent='일시정지';
+        announce('운동을 계속합니다');
+      }
+      render();
+    }
+
+    function finishWorkout(auto=false){
+      running=false;
+      if(timer){clearInterval(timer); timer=null;}
+      stopGps();
+
+      const now=Date.now();
+      const elapsed=startedAt ? Math.max(0,Math.floor((now-startedAt-pausedTotal)/1000)) : 0;
+      const km=totalDistanceM/1000;
+      let pace='--';
+      if(km>0.05 && elapsed>0){
+        const spk=elapsed/km;
+        pace=Math.floor(spk/60)+"'"+String(Math.round(spk%60)).padStart(2,'0')+'" /km';
+      }
+      summary.textContent =
+        `거리 ${km.toFixed(2)} km\n운동시간 ${fmtTime(elapsed)}\n평균 페이스 ${pace}` +
+        (auto ? '\n루틴 완료 🎉' : '\n운동을 수동 종료했습니다.');
+
+      phaseName.textContent='완료';
+      countdown.textContent='00:00';
+      progress.style.width='100%';
+      startBtn.disabled=false;
+      startBtn.textContent='새 운동';
+      pauseBtn.disabled=true;
+      pauseBtn.textContent='일시정지';
+      finishBtn.disabled=true;
+      gpsStatus.textContent='운동 종료. 기록은 이 화면에만 표시됩니다.';
+      announce('운동을 마쳤습니다');
+      startedAt=null; pausedAt=null; pausedTotal=0;
+    }
+
+    startBtn.addEventListener('click',startWorkout);
+    pauseBtn.addEventListener('click',pauseWorkout);
+    finishBtn.addEventListener('click',()=>finishWorkout(false));
+
+    if('serviceWorker' in navigator){
+      navigator.serviceWorker.register('./sw.js').catch(()=>{});
+    }
+    render();
+  })();
+  </script>
+</main>
+</body>
+</html>

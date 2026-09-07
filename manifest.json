@@ -1,0 +1,9 @@
+{
+  "name": "나의 5K",
+  "short_name": "나의5K",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#111827",
+  "description": "5km 완주를 위한 개인 러닝 기록 앱"
+}

@@ -8,7 +8,7 @@
   "description": "5km 완주를 위한 개인 러닝 기록 앱",
   "icons": [
   {
-    "src": "icon2.png",
+    "src": "icon2.png?v=2",
     "sizes": "512x512",
     "type": "image/png"
   }
